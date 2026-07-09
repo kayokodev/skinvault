@@ -61,7 +61,3 @@ SkinVault requires the following libraries to run:
  ```
 ## 📄 License
  This project is open-source software licensed under the **Apache License 2.0**.
-
-
-## 📈 Star History
-[![Star History Chart](https://api.star-history.com/chart?repos=simonov41coder/skinvault&type=date&legend=top-left)](https://www.star-history.com/?repos=simonov41coder%2Fskinvault&type=date&legend=top-left)
