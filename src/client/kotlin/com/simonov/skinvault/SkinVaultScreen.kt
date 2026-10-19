@@ -50,7 +50,6 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         const val ICON_BTN_W  = 24
         const val ICON_SIZE   = 16
         const val GAP         = 6
-        const val LEFT_BUTTON = 0
 
         fun tex(name: String) = Identifier.fromNamespaceAndPath("skinvault", "textures/gui/$name")
     }
@@ -304,13 +303,8 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         }
     }
 
-    // FIX: buttons now fire on mouse *release* of the *left* button, and only if the
-    // press also started on this same button (so right-clicks and "drag onto me"
-    // no longer trigger actions).
-
     private fun createFlatButton(text: String, width: Sizing, height: Sizing, baseColor: Int, onClick: () -> Unit): FlowLayout {
         var state = 0 // 0 = Idle, 1 = Hovered, 2 = Pressed
-        var armed = false
 
         val btn = UIContainers.horizontalFlow(width, height)
             .surface { graphics, component ->
@@ -327,24 +321,16 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         btn.child(UIComponents.label(Component.literal(text)).color(Color.ofArgb(TEXT_COLOR)))
 
         btn.mouseEnter().subscribe { state = 1 }
-        btn.mouseLeave().subscribe {
-            state = 0
-            armed = false
-        }
+        btn.mouseLeave().subscribe { state = 0 }
 
-        btn.mouseDown().subscribe { event, _ ->
-            if (event.button() == LEFT_BUTTON) {
-                state = 2
-                armed = true
-            }
+        btn.mouseDown().subscribe { _, _ ->
+            state = 2
+            onClick()
             true
         }
 
-        btn.mouseUp().subscribe { event ->
-            val shouldFire = armed && event.button() == LEFT_BUTTON
-            armed = false
+        btn.mouseUp().subscribe { _ ->
             state = 1
-            if (shouldFire) onClick()
             true
         }
 
@@ -354,7 +340,6 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
     private fun createIconButton(texture: String, color: Int, onClick: () -> Unit): FlowLayout {
         val id = tex(texture)
         var state = 0 // 0 = Idle, 1 = Hovered, 2 = Pressed
-        var armed = false
 
         val btn = UIContainers.horizontalFlow(Sizing.fixed(ICON_BTN_W), Sizing.fixed(BUTTON_H))
             .surface { graphics, component ->
@@ -381,24 +366,16 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
             .verticalAlignment(VerticalAlignment.CENTER) as FlowLayout
 
         btn.mouseEnter().subscribe { state = 1 }
-        btn.mouseLeave().subscribe {
-            state = 0
-            armed = false
-        }
+        btn.mouseLeave().subscribe { state = 0 }
 
-        btn.mouseDown().subscribe { event, _ ->
-            if (event.button() == LEFT_BUTTON) {
-                state = 2
-                armed = true
-            }
+        btn.mouseDown().subscribe { _, _ ->
+            state = 2
+            onClick()
             true
         }
 
-        btn.mouseUp().subscribe { event ->
-            val shouldFire = armed && event.button() == LEFT_BUTTON
-            armed = false
+        btn.mouseUp().subscribe { _ ->
             state = 1
-            if (shouldFire) onClick()
             true
         }
 
