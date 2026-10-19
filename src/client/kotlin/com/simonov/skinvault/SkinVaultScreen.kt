@@ -1,6 +1,7 @@
 package com.simonov.skinvault
 
 import io.wispforest.owo.ui.base.BaseOwoScreen
+import io.wispforest.owo.ui.component.LabelComponent
 import io.wispforest.owo.ui.component.UIComponents
 import io.wispforest.owo.ui.container.UIContainers
 import io.wispforest.owo.ui.container.FlowLayout
@@ -11,12 +12,16 @@ import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
 import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.Minecraft
+import org.slf4j.LoggerFactory
 
 class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
 
     private val skinList = mutableListOf<SkinStorage.SkinEntry>()
     private var isFormOpen = false
-    private var editingIndex: Int? = null
+
+    // FIX: track the entry being edited by reference instead of by list index.
+    // An index can go stale after a delete and make a save overwrite the wrong skin.
+    private var editingEntry: SkinStorage.SkinEntry? = null
     private var searchQuery = ""
 
     private lateinit var contentContainer: FlowLayout
@@ -27,20 +32,25 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
     private lateinit var popupNameField: io.wispforest.owo.ui.component.TextBoxComponent
     private lateinit var popupUrlField: io.wispforest.owo.ui.component.TextBoxComponent
     private lateinit var popupConfirmBtn: FlowLayout
+    private lateinit var popupErrorLabel: LabelComponent
 
     private companion object {
+        val logger = LoggerFactory.getLogger("SkinVault/Screen")
+
         const val PANEL_BG    = 0xFF1A1A1A.toInt()
         const val POPUP_BG    = 0xFF242424.toInt()
         const val NAVY_ACCENT = 0xFF3A52C8.toInt()
         const val RED_ACCENT  = 0xFF8B2020.toInt()
         const val TEXT_COLOR  = 0xFFF2F2F2.toInt()
         const val DIM_COLOR   = 0xFFAAAAAA.toInt()
+        const val ERROR_COLOR = 0xFFE05555.toInt()
         const val MAX_CHARS   = 200
         const val PANEL_W     = 90
         const val BUTTON_H    = 22
         const val ICON_BTN_W  = 24
         const val ICON_SIZE   = 16
         const val GAP         = 6
+        const val LEFT_BUTTON = 0
 
         fun tex(name: String) = Identifier.fromNamespaceAndPath("skinvault", "textures/gui/$name")
     }
@@ -77,7 +87,7 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         searchRow.margins(Insets.bottom(GAP))
 
         searchBarRef = UIComponents.textBox(Sizing.expand())
-        searchBarRef.setHint(Component.literal("Search skins...")) // Fixed placeholder issue here
+        searchBarRef.setHint(Component.literal("Search skins..."))
         searchBarRef.setMaxLength(MAX_CHARS)
         searchBarRef.margins(Insets.right(GAP))
 
@@ -86,7 +96,7 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
 
         searchRow.child(searchBarRef)
         searchRow.child(searchBtn)
-        searchRow.child(createIconButton("icon_plus.png", NAVY_ACCENT) { openPopup(editIndex = null) })
+        searchRow.child(createIconButton("icon_plus.png", NAVY_ACCENT) { openPopup(editEntry = null) })
         contentContainer.child(searchRow)
 
         popupFrameContainer = UIContainers.verticalFlow(Sizing.fill(100), Sizing.content()) as FlowLayout
@@ -153,12 +163,16 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         popupModal.margins(Insets.bottom(GAP))
 
         popupNameField = UIComponents.textBox(Sizing.fill(100))
-        popupNameField.setHint(Component.literal("Skin name...")) // Fixed placeholder issue here
+        popupNameField.setHint(Component.literal("Skin name..."))
         popupNameField.setMaxLength(MAX_CHARS)
 
         popupUrlField = UIComponents.textBox(Sizing.fill(100))
-        popupUrlField.setHint(Component.literal("Skin URL...")) // Fixed placeholder issue here
+        popupUrlField.setHint(Component.literal("Skin URL (https://...)"))
         popupUrlField.setMaxLength(MAX_CHARS)
+
+        popupErrorLabel = UIComponents.label(Component.empty())
+            .color(Color.ofArgb(ERROR_COLOR))
+        popupErrorLabel.margins(Insets.top(GAP))
 
         val confirmRow = UIContainers.horizontalFlow(Sizing.fill(100), Sizing.fixed(BUTTON_H))
             .horizontalAlignment(HorizontalAlignment.RIGHT) as FlowLayout
@@ -170,33 +184,49 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         cancelBtn.margins(Insets.right(GAP))
 
         popupConfirmBtn = createFlatButton("Add Skin", Sizing.expand(), Sizing.fixed(BUTTON_H), NAVY_ACCENT) {
-            val name = popupNameField.value.trim()
-            val url  = popupUrlField.value.trim()
-            if (name.isNotEmpty() && url.isNotEmpty()) {
-                val entry = SkinStorage.SkinEntry(name, url)
-                val idx = editingIndex
-                if (idx != null) skinList[idx] = entry else skinList.add(entry)
-                SkinStorage.save(skinList)
-                searchQuery = ""
-                searchBarRef.value = ""
-                closePopup()
-                refreshSkinButtons()
-            }
+            confirmPopup()
         }
 
         confirmRow.child(cancelBtn)
         confirmRow.child(popupConfirmBtn)
         popupModal.child(popupNameField.margins(Insets.bottom(GAP)))
         popupModal.child(popupUrlField)
+        popupModal.child(popupErrorLabel)
         popupModal.child(confirmRow)
     }
 
-    private fun openPopup(editIndex: Int?) {
-        editingIndex = editIndex
-        if (editIndex != null) {
-            val skin = skinList[editIndex]
-            popupNameField.value = skin.name
-            popupUrlField.value  = skin.url
+    private fun confirmPopup() {
+        val name = popupNameField.value.trim()
+        val url  = popupUrlField.value.trim()
+
+        if (name.isEmpty() || url.isEmpty()) {
+            popupErrorLabel.text(Component.literal("Name and URL are required."))
+            return
+        }
+        if (!SkinStorage.isValidSkinUrl(url)) {
+            popupErrorLabel.text(Component.literal("URL must start with http:// or https:// and contain no spaces."))
+            return
+        }
+
+        val entry = SkinStorage.SkinEntry(name, url)
+        val editing = editingEntry
+        // Locate by identity. If the entry vanished meanwhile, fall back to adding it.
+        val idx = if (editing != null) skinList.indexOfFirst { it === editing } else -1
+        if (idx >= 0) skinList[idx] = entry else skinList.add(entry)
+
+        SkinStorage.save(skinList)
+        searchQuery = ""
+        searchBarRef.value = ""
+        closePopup()
+        refreshSkinButtons()
+    }
+
+    private fun openPopup(editEntry: SkinStorage.SkinEntry?) {
+        editingEntry = editEntry
+        popupErrorLabel.text(Component.empty())
+        if (editEntry != null) {
+            popupNameField.value = editEntry.name
+            popupUrlField.value  = editEntry.url
             popupConfirmBtn.clearChildren()
             popupConfirmBtn.child(UIComponents.label(Component.literal("Save")).color(Color.ofArgb(TEXT_COLOR)))
         } else {
@@ -212,15 +242,35 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
 
     private fun closePopup() {
         isFormOpen = false
-        editingIndex = null
+        editingEntry = null
+        popupErrorLabel.text(Component.empty())
         popupFrameContainer.clearChildren()
+    }
+
+    private fun deleteSkin(skin: SkinStorage.SkinEntry) {
+        val idx = skinList.indexOfFirst { it === skin }
+        if (idx >= 0) skinList.removeAt(idx)
+        // If the skin being edited was just deleted, the open form is now meaningless.
+        if (editingEntry === skin) closePopup()
+        SkinStorage.save(skinList)
+        refreshSkinButtons()
+    }
+
+    private fun applySkin(skin: SkinStorage.SkinEntry) {
+        // Re-validate here too, in case skins.json was edited by hand.
+        if (!SkinStorage.isValidSkinUrl(skin.url)) {
+            logger.warn("Refusing to apply skin '{}': its URL is not a valid http(s) URL", skin.name)
+            return
+        }
+        logger.info("Applying skin '{}'", skin.name)
+        sendCommand("skin url ${skin.url}")
     }
 
     private fun refreshSkinButtons() {
         listContainer.clearChildren()
 
-        val filtered = if (searchQuery.isEmpty()) skinList.mapIndexed { i, s -> i to s }
-                       else skinList.mapIndexed { i, s -> i to s }.filter { (_, s) -> s.name.contains(searchQuery, ignoreCase = true) }
+        val filtered = if (searchQuery.isEmpty()) skinList.toList()
+                       else skinList.filter { it.name.contains(searchQuery, ignoreCase = true) }
 
         if (filtered.isEmpty()) {
             listContainer.child(
@@ -231,26 +281,21 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
             return
         }
 
-        for ((index, skin) in filtered) {
+        for (skin in filtered) {
             val row = UIContainers.horizontalFlow(Sizing.fill(100), Sizing.fixed(BUTTON_H))
                 .surface(Surface.flat(PANEL_BG))
                 .verticalAlignment(VerticalAlignment.CENTER) as FlowLayout
             row.margins(Insets.bottom(4))
 
             val nameBtn = createFlatButton(skin.name, Sizing.expand(), Sizing.fill(100), NAVY_ACCENT) {
-                println("Loading Skin: ${skin.url}")
-                sendCommand("skin url ${skin.url}")
+                applySkin(skin)
             }
             nameBtn.margins(Insets.right(4))
 
-            val editBtn = createIconButton("icon_edit.png", NAVY_ACCENT) { openPopup(editIndex = index) }
+            val editBtn = createIconButton("icon_edit.png", NAVY_ACCENT) { openPopup(editEntry = skin) }
             editBtn.margins(Insets.right(4))
 
-            val deleteBtn = createIconButton("icon_delete.png", RED_ACCENT) {
-                skinList.removeAt(index)
-                SkinStorage.save(skinList)
-                refreshSkinButtons()
-            }
+            val deleteBtn = createIconButton("icon_delete.png", RED_ACCENT) { deleteSkin(skin) }
 
             row.child(nameBtn)
             row.child(editBtn)
@@ -259,8 +304,13 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         }
     }
 
+    // FIX: buttons now fire on mouse *release* of the *left* button, and only if the
+    // press also started on this same button (so right-clicks and "drag onto me"
+    // no longer trigger actions).
+
     private fun createFlatButton(text: String, width: Sizing, height: Sizing, baseColor: Int, onClick: () -> Unit): FlowLayout {
         var state = 0 // 0 = Idle, 1 = Hovered, 2 = Pressed
+        var armed = false
 
         val btn = UIContainers.horizontalFlow(width, height)
             .surface { graphics, component ->
@@ -277,16 +327,24 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         btn.child(UIComponents.label(Component.literal(text)).color(Color.ofArgb(TEXT_COLOR)))
 
         btn.mouseEnter().subscribe { state = 1 }
-        btn.mouseLeave().subscribe { state = 0 }
-        
-        btn.mouseDown().subscribe { event, _ -> 
-            state = 2
-            onClick()
-            true 
+        btn.mouseLeave().subscribe {
+            state = 0
+            armed = false
         }
-        
+
+        btn.mouseDown().subscribe { event, _ ->
+            if (event.button() == LEFT_BUTTON) {
+                state = 2
+                armed = true
+            }
+            true
+        }
+
         btn.mouseUp().subscribe { event ->
+            val shouldFire = armed && event.button() == LEFT_BUTTON
+            armed = false
             state = 1
+            if (shouldFire) onClick()
             true
         }
 
@@ -296,6 +354,7 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
     private fun createIconButton(texture: String, color: Int, onClick: () -> Unit): FlowLayout {
         val id = tex(texture)
         var state = 0 // 0 = Idle, 1 = Hovered, 2 = Pressed
+        var armed = false
 
         val btn = UIContainers.horizontalFlow(Sizing.fixed(ICON_BTN_W), Sizing.fixed(BUTTON_H))
             .surface { graphics, component ->
@@ -305,10 +364,10 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
                     else -> color
                 }
                 Surface.flat(renderColor).draw(graphics, component)
-                
+
                 val x = component.x() + (component.width() - ICON_SIZE) / 2
                 val y = component.y() + (component.height() - ICON_SIZE) / 2
-                
+
                 graphics.blit(
                     RenderPipelines.GUI_TEXTURED,
                     id,
@@ -322,16 +381,24 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
             .verticalAlignment(VerticalAlignment.CENTER) as FlowLayout
 
         btn.mouseEnter().subscribe { state = 1 }
-        btn.mouseLeave().subscribe { state = 0 }
-
-        btn.mouseDown().subscribe { event, _ -> 
-            state = 2
-            onClick()
-            true 
+        btn.mouseLeave().subscribe {
+            state = 0
+            armed = false
         }
-        
+
+        btn.mouseDown().subscribe { event, _ ->
+            if (event.button() == LEFT_BUTTON) {
+                state = 2
+                armed = true
+            }
+            true
+        }
+
         btn.mouseUp().subscribe { event ->
+            val shouldFire = armed && event.button() == LEFT_BUTTON
+            armed = false
             state = 1
+            if (shouldFire) onClick()
             true
         }
 
@@ -346,4 +413,3 @@ class SkinVaultScreen(parent: Screen?) : BaseOwoScreen<FlowLayout>() {
         }
     }
 }
-

@@ -4,7 +4,7 @@
 
 A streamlined, modern client-side Fabric mod for managing, saving, and instantly switching between your favorite Minecraft skins.
 
-[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-brightgreen?style=for-the-badge&logo=minecraft&logoColor=white)](https://www.minecraft.net/)
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.11-brightgreen?style=for-the-badge&logo=minecraft&logoColor=white)](https://www.minecraft.net/)
 [![Fabric](https://img.shields.io/badge/Loader-Fabric-orange?style=for-the-badge&logo=fabric)](https://fabricmc.net/)
 [![Java](https://img.shields.io/badge/Java-21-red?style=for-the-badge&logo=openjdk&logoColor=white)](https://adoptium.net/)
 [![License](https://img.shields.io/github/license/simonov41coder/skinvault?style=for-the-badge)](LICENSE)
